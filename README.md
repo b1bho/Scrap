@@ -2,6 +2,40 @@
 
 A modular Python tool for scraping contact information (emails, phone numbers, social media) from company websites using automated Google searches and Selenium WebDriver.
 
+## 🆕 New Modular Version vs Original
+
+| Feature | Original Script | New Modular Version |
+|---------|----------------|-------------------|
+| **Structure** | Single 300-line file | 5 focused modules |
+| **Configuration** | Hardcoded in script | External config file |
+| **Contact Detection** | Basic single page | Multi-page + contact pages |
+| **Error Handling** | Basic | Retry logic + backoff |
+| **Validation** | Regex only | Format + content validation |
+| **API Usage** | Not possible | Full programmatic API |
+| **Testing** | None | Comprehensive test suite |
+| **Customization** | Edit source code | Configuration file |
+
+**✅ 100% Backward Compatible** - Same input/output format, same results.
+
+## Quick Start
+
+### Option 1: Use New Modular Version (Recommended)
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+### Option 2: Keep Using Original Script
+```bash
+pip install -r requirements.txt  
+python OSINT_Sel_Chrome.py
+```
+
+### Option 3: Try the Demo (No Dependencies)
+```bash
+python demo.py
+```
+
 ## Features
 
 - **Modular Architecture**: Separated concerns into focused modules
