@@ -286,7 +286,7 @@ class BrowserManager:
         self.close()
 
 def check_first_run():
-    """Check if this is the first run and display authentication instructions."""
+    """Check if this is the first run and open Chrome for authentication."""
     profile_dir = get_profile_path()
     if not os.path.exists(profile_dir):
         print("=" * 70)
@@ -296,4 +296,35 @@ def check_first_run():
         print("3. Una volta fatto, puoi chiudere la finestra e riavviare lo script.")
         print("   Dovrai fare questa operazione solo una volta.")
         print("=" * 70)
-        time.sleep(8)
+        time.sleep(3)
+        
+        # Actually open Chrome for first-time authentication
+        print("Apertura di Chrome per l'autenticazione...")
+        temp_browser = BrowserManager()
+        driver = temp_browser.setup_driver()
+        
+        if driver:
+            try:
+                # Navigate to Google to trigger authentication
+                driver.get("https://www.google.com")
+                print("Chrome aperto. Accedi al tuo account Google, poi chiudi questa finestra.")
+                print("Dopo aver chiuso Chrome, riavvia lo script.")
+                
+                # Wait for user to close the browser manually
+                try:
+                    while True:
+                        # Check if browser is still alive
+                        driver.current_url
+                        time.sleep(2)
+                except Exception:
+                    # Browser was closed by user
+                    print("Chrome chiuso. Riavvia lo script per continuare.")
+                    
+            except Exception as e:
+                logging.error(f"Errore durante l'apertura di Chrome: {e}")
+            finally:
+                temp_browser.close()
+                
+        # Exit after first run setup
+        import sys
+        sys.exit(0)
