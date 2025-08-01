@@ -2,6 +2,8 @@
 Contact information scraper for extracting emails, phone numbers, and social media links.
 """
 import re
+import time
+import random
 import logging
 from typing import List, Tuple, Set
 from bs4 import BeautifulSoup
@@ -35,21 +37,63 @@ class ContactScraper:
         return list(emails), list(phones), list(socials)
     
     def _extract_emails(self, html_content: str) -> Set[str]:
-        """Extract email addresses from HTML content."""
+        """Extract email addresses from HTML content with better filtering."""
         emails = set()
         
         # Find all email patterns
         found_emails = self.email_pattern.findall(html_content)
         
+        # Common spam/invalid email patterns to exclude
+        spam_patterns = [
+            'example.com', 'test.com', 'domain.com', 'yoursite.com',
+            'sampleemail', 'noreply', 'no-reply', 'donotreply'
+        ]
+        
         for email in found_emails:
+            email_lower = email.lower()
+            
             # Filter out image file extensions
-            if not any(email.lower().endswith(ext) for ext in IMAGE_EXTENSIONS):
-                emails.add(email.lower())
+            if any(email_lower.endswith(ext) for ext in IMAGE_EXTENSIONS):
+                continue
+                
+            # Filter out common spam patterns
+            if any(pattern in email_lower for pattern in spam_patterns):
+                continue
+                
+            # Basic email validation
+            if self._is_valid_email(email):
+                emails.add(email_lower)
         
         return emails
     
+    def _is_valid_email(self, email: str) -> bool:
+        """Validate email format and quality."""
+        if not email or len(email) < 5:
+            return False
+            
+        # Must have exactly one @
+        if email.count('@') != 1:
+            return False
+            
+        local, domain = email.split('@')
+        
+        # Basic local part validation
+        if len(local) < 1 or len(domain) < 3:
+            return False
+            
+        # Domain should have at least one dot and not start/end with dot
+        if '.' not in domain or domain.startswith('.') or domain.endswith('.'):
+            return False
+            
+        # Domain extension should be reasonable
+        domain_parts = domain.split('.')
+        if len(domain_parts[-1]) < 2 or any(not part for part in domain_parts):
+            return False
+            
+        return True
+    
     def _extract_phones(self, html_content: str) -> Set[str]:
-        """Extract phone numbers from HTML content."""
+        """Extract phone numbers from HTML content with better validation."""
         phones = set()
         
         # Find all phone patterns
@@ -60,11 +104,31 @@ class ContactScraper:
             clean_phone = re.sub(r'[^\d+]', '', phone)
             clean_phone = clean_phone.replace("tel:", "").replace("callto:", "")
             
-            # Only include if it has reasonable length
-            if len(clean_phone) > 8:
+            # Validate phone number
+            if self._is_valid_phone(clean_phone):
                 phones.add(clean_phone.strip())
         
         return phones
+    
+    def _is_valid_phone(self, phone: str) -> bool:
+        """Validate phone number format and length."""
+        if not phone:
+            return False
+            
+        # Remove + for length checking
+        digits_only = phone.replace('+', '')
+        
+        # Should be between 8 and 15 digits (international standard)
+        if not digits_only.isdigit() or len(digits_only) < 8 or len(digits_only) > 15:
+            return False
+            
+        # Avoid obvious invalid numbers (but allow reasonable length patterns)
+        if len(digits_only) >= 10:  # Only check patterns for longer numbers
+            invalid_patterns = ['0000000000', '1111111111', '1234567890']
+            if any(pattern in digits_only for pattern in invalid_patterns):
+                return False
+        
+        return True
     
     def _extract_social_media(self, html_content: str) -> Set[str]:
         """Extract social media links from HTML content."""
@@ -86,32 +150,54 @@ class ContactScraper:
         
         return socials
     
-    def scrape_url_with_browser(self, browser_manager, url: str) -> Tuple[List[str], List[str], List[str]]:
+    def scrape_url_with_browser(self, browser_manager, url: str, max_retries: int = None) -> Tuple[List[str], List[str], List[str]]:
         """
-        Scrape a URL using browser manager for JavaScript-rendered content.
+        Scrape a URL using browser manager for JavaScript-rendered content with retry logic.
         
         Args:
             browser_manager: BrowserManager instance
             url: URL to scrape
+            max_retries: Maximum number of retry attempts
             
         Returns:
             Tuple of (emails, phones, social_links)
         """
-        try:
-            if browser_manager.navigate_to_url(url):
-                html_content = browser_manager.get_page_source()
-                return self.extract_contacts_from_html(html_content)
-            else:
-                logging.warning(f"Could not navigate to {url}")
-                return [], [], []
+        max_retries = max_retries or MAX_RETRIES
+        
+        for attempt in range(max_retries + 1):
+            try:
+                if browser_manager.navigate_to_url(url):
+                    # Wait a bit more for dynamic content to load
+                    time.sleep(random.uniform(2, 4))
+                    html_content = browser_manager.get_page_source()
+                    
+                    if html_content and len(html_content) > 1000:  # Basic content validation
+                        return self.extract_contacts_from_html(html_content)
+                    else:
+                        logging.warning(f"Page content seems incomplete for {url}")
+                        
+                else:
+                    logging.warning(f"Could not navigate to {url}")
                 
-        except Exception as e:
-            logging.error(f"Error scraping {url}: {e}")
-            return [], [], []
+                # If we reach here, there was an issue - retry if attempts remaining
+                if attempt < max_retries:
+                    wait_time = RETRY_BACKOFF_FACTOR ** attempt
+                    logging.info(f"Retrying {url} in {wait_time} seconds (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    
+            except Exception as e:
+                logging.error(f"Error scraping {url} (attempt {attempt + 1}): {e}")
+                if attempt < max_retries:
+                    wait_time = RETRY_BACKOFF_FACTOR ** attempt
+                    time.sleep(wait_time)
+                else:
+                    logging.error(f"Failed to scrape {url} after {max_retries + 1} attempts")
+        
+        return [], [], []
     
     def scrape_multiple_urls(self, browser_manager, urls: List[str]) -> Tuple[List[str], List[str], List[str]]:
         """
-        Scrape multiple URLs and combine results.
+        Scrape multiple URLs and combine results with smart prioritization.
         
         Args:
             browser_manager: BrowserManager instance
@@ -124,8 +210,11 @@ class ContactScraper:
         all_phones = set()
         all_socials = set()
         
-        for url in urls:
-            logging.info(f"Scraping: {url}")
+        # Prioritize URLs - contact pages first, then main site
+        prioritized_urls = self._prioritize_urls(urls)
+        
+        for i, url in enumerate(prioritized_urls):
+            logging.info(f"Scraping ({i+1}/{len(prioritized_urls)}): {url}")
             emails, phones, socials = self.scrape_url_with_browser(browser_manager, url)
             
             all_emails.update(emails)
@@ -134,14 +223,39 @@ class ContactScraper:
             
             # Log findings
             if emails or phones or socials:
-                logging.info(f"Found contacts on {url}: {len(emails)} emails, {len(phones)} phones, {len(socials)} socials")
+                logging.info(f"✓ Found contacts on {url}: {len(emails)} emails, {len(phones)} phones, {len(socials)} socials")
                 
-                # If we have good contact info, we might not need to scrape more URLs
-                if len(emails) >= 2 or len(phones) >= 1:
-                    logging.info("Found sufficient contact information, stopping URL scraping")
+                # Smart stopping criteria - if we have good contact info from a contact page, stop early
+                if self._is_contact_page(url) and (len(emails) >= 1 or len(phones) >= 1):
+                    logging.info("Found sufficient contact information from contact page, stopping early")
                     break
+                elif len(emails) >= 3 or len(phones) >= 2:
+                    logging.info("Found substantial contact information, stopping URL scraping")
+                    break
+            else:
+                logging.info(f"✗ No contacts found on {url}")
         
         return list(all_emails), list(all_phones), list(all_socials)
+    
+    def _prioritize_urls(self, urls: List[str]) -> List[str]:
+        """Prioritize URLs to scrape contact pages first."""
+        contact_urls = []
+        other_urls = []
+        
+        for url in urls:
+            if self._is_contact_page(url):
+                contact_urls.append(url)
+            else:
+                other_urls.append(url)
+        
+        # Contact pages first, then others
+        return contact_urls + other_urls
+    
+    def _is_contact_page(self, url: str) -> bool:
+        """Check if URL appears to be a contact page."""
+        url_lower = url.lower()
+        contact_indicators = ['contact', 'contatt', 'about', 'chi-siamo', 'team', 'lavora-con-noi']
+        return any(indicator in url_lower for indicator in contact_indicators)
     
     def analyze_company_contacts(self, browser_manager, nome_azienda: str, citta: str) -> Tuple[str, List[str], List[str], List[str]]:
         """

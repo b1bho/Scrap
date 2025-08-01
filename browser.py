@@ -166,33 +166,72 @@ class BrowserManager:
             self.driver.get(base_url)
             time.sleep(random.uniform(2, 4))
             
-            # Look for contact/about page links
+            # Look for contact/about page links with multiple strategies
+            contact_urls_found = set()
+            
+            # Strategy 1: Look for links by text content
             for keyword in CONTACT_KEYWORDS:
                 try:
-                    link_element = self.driver.find_element(
-                        By.XPATH, 
-                        f"//a[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]"
-                    )
-                    if link_element and link_element.is_displayed() and link_element.is_enabled():
-                        contact_url = link_element.get_attribute('href')
-                        if contact_url and contact_url not in candidate_urls:
-                            candidate_urls.append(contact_url)
-                            logging.info(f"Found contact page: {contact_url}")
-                            break  # Only add one contact page
+                    # Case-insensitive search for link text
+                    xpath_queries = [
+                        f"//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]",
+                        f"//a[contains(translate(@title, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]",
+                        f"//a[contains(translate(@href, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{keyword}')]"
+                    ]
+                    
+                    for xpath in xpath_queries:
+                        try:
+                            elements = self.driver.find_elements(By.XPATH, xpath)
+                            for element in elements:
+                                if element.is_displayed() and element.is_enabled():
+                                    href = element.get_attribute('href')
+                                    if href and self._is_valid_contact_url(href, base_url):
+                                        contact_urls_found.add(href)
+                                        logging.info(f"Found {keyword} page: {href}")
+                                        if len(contact_urls_found) >= 2:  # Limit to 2 contact pages
+                                            break
+                        except Exception:
+                            continue
+                        
+                    if len(contact_urls_found) >= 2:
+                        break
+                        
                 except Exception:
                     continue
+            
+            # Add found contact URLs to candidates
+            candidate_urls.extend(list(contact_urls_found))
                     
         except Exception as e:
             logging.warning(f"Could not get candidate URLs from {base_url}: {e}")
             
         return candidate_urls
     
-    def navigate_to_url(self, url: str) -> bool:
+    def _is_valid_contact_url(self, url: str, base_url: str) -> bool:
+        """Check if a URL is a valid contact page URL."""
+        if not url or not url.startswith('http'):
+            return False
+        
+        # Should be from the same domain or a reasonable subdomain
+        from urllib.parse import urlparse
+        base_domain = urlparse(base_url).netloc.lower()
+        url_domain = urlparse(url).netloc.lower()
+        
+        # Accept same domain or reasonable subdomains
+        if url_domain != base_domain and not url_domain.endswith('.' + base_domain):
+            return False
+            
+        # Avoid obviously wrong URLs
+        exclude_patterns = ['mailto:', 'tel:', 'javascript:', '#']
+        return not any(pattern in url.lower() for pattern in exclude_patterns)
+    
+    def navigate_to_url(self, url: str, timeout: int = 30) -> bool:
         """
-        Navigate to a specific URL.
+        Navigate to a specific URL with timeout handling.
         
         Args:
             url: URL to navigate to
+            timeout: Maximum time to wait for page load
             
         Returns:
             True if successful, False otherwise
@@ -201,9 +240,18 @@ class BrowserManager:
             return False
             
         try:
+            # Set page load timeout
+            self.driver.set_page_load_timeout(timeout)
             self.driver.get(url)
+            
+            # Wait for page to be ready
+            WebDriverWait(self.driver, 10).until(
+                lambda driver: driver.execute_script("return document.readyState") == "complete"
+            )
+            
             time.sleep(random.uniform(2, 4))
             return True
+            
         except Exception as e:
             logging.warning(f"Could not navigate to {url}: {e}")
             return False
