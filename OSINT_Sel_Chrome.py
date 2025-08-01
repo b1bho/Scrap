@@ -16,6 +16,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium_stealth import stealth
+from bs4 import BeautifulSoup
 
 # --- CONFIGURAZIONE ---
 FILE_OUTPUT = 'risultati_osint_selenium_chrome.csv'
